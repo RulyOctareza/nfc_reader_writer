@@ -61,6 +61,47 @@ class NfcUriRecord extends NfcRecord {
   int get hashCode => Object.hash(uri, protocol);
 }
 
+/// Record kartu Kencana (`application/x-kencana`).
+///
+/// Payload: `json_utf8 + DE AD BE EF + ed25519_signature`.
+class NfcKencanaRecord extends NfcRecord {
+  const NfcKencanaRecord({
+    required this.jsonText,
+    required this.signature,
+    required this.rawPayload,
+    this.json,
+    this.signatureValid,
+    this.isLegacyFormat = false,
+  });
+
+  final String jsonText;
+  final Map<String, dynamic>? json;
+  final Uint8List signature;
+  final Uint8List rawPayload;
+  final bool? signatureValid;
+  final bool isLegacyFormat;
+
+  bool get isSignedFormat => !isLegacyFormat;
+
+  @override
+  String toString() =>
+      'NfcKencanaRecord(signed: $isSignedFormat, valid: $signatureValid)';
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is NfcKencanaRecord &&
+          runtimeType == other.runtimeType &&
+          jsonText == other.jsonText &&
+          signatureValid == other.signatureValid &&
+          isLegacyFormat == other.isLegacyFormat &&
+          listEquals(signature, other.signature);
+
+  @override
+  int get hashCode =>
+      Object.hash(jsonText, signatureValid, isLegacyFormat, signature);
+}
+
 /// Record NDEF bertipe MIME / Media.
 class NfcMimeRecord extends NfcRecord {
   const NfcMimeRecord({

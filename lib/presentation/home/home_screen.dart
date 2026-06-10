@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:nfc_reader_writer/presentation/widgets/app_logo.dart';
 
-/// Layar utama (landing) dengan dua opsi: Baca atau Tulis NFC.
+/// Layar utama (landing) dengan opsi baca NFC dan baca kartu Kencana.
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
@@ -29,12 +30,13 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               _FeatureCard(
-                icon: Icons.edit_note_rounded,
-                title: 'Tulis NFC',
+                icon: Icons.badge_rounded,
+                title: 'Baca Kartu Kencana',
                 description:
-                    'Tulis teks kustom Anda ke tag NFC yang dapat ditulis.',
-                color: colorScheme.tertiary,
-                onTap: () => context.push('/write'),
+                    'Baca kartu WB (application/x-kencana) '
+                    'dengan verifikasi Ed25519.',
+                color: colorScheme.secondary,
+                onTap: () => context.push('/read-kencana'),
               ),
               const Spacer(flex: 2),
               _Footer(colorScheme: colorScheme),
@@ -55,22 +57,10 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Column(
     children: [
-      Container(
-        width: 88,
-        height: 88,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: LinearGradient(
-            colors: [colorScheme.primary, colorScheme.tertiary],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: const Icon(Icons.nfc_rounded, size: 48, color: Colors.white),
-      ),
+      const AppLogo(),
       const SizedBox(height: 24),
       Text(
-        'NFC Reader & Writer',
+        'NFC Reader',
         textAlign: TextAlign.center,
         style: textTheme.headlineMedium?.copyWith(
           fontWeight: FontWeight.w800,

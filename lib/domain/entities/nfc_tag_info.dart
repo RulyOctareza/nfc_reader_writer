@@ -9,10 +9,14 @@ class NfcTagInfo {
   const NfcTagInfo({
     required this.uid,
     required this.techList,
+    this.chipModel,
     this.ndefType,
     this.capacity,
+    this.totalMemoryBytes,
+    this.ndefUsedBytes,
     this.record,
     this.isNdefFormatted = false,
+    this.isNdefFormatable = false,
     this.rawTechData = const {},
   });
 
@@ -22,17 +26,29 @@ class NfcTagInfo {
   /// Daftar teknologi yang didukung kartu (contoh: [NfcA, Ndef, NdefFormatable]).
   final List<String> techList;
 
+  /// Model chip yang teridentifikasi (contoh: NTAG216, Mifare Classic 1K).
+  final String? chipModel;
+
   /// Tipe NDEF (contoh: 'NFC Forum Type 2').
   final String? ndefType;
 
-  /// Estimasi kapasitas memori dalam byte.
+  /// Kapasitas penyimpanan pesan NDEF dalam byte.
   final int? capacity;
+
+  /// Total memori user chip dalam byte (jika diketahui).
+  final int? totalMemoryBytes;
+
+  /// Ukuran pesan NDEF yang sedang tersimpan dalam byte.
+  final int? ndefUsedBytes;
 
   /// Data record yang berhasil dibaca (jika ada).
   final NfcRecord? record;
 
   /// Flag apakah kartu sudah terformat NDEF.
   final bool isNdefFormatted;
+
+  /// Flag apakah kartu bisa diformat ke NDEF (belum terformat).
+  final bool isNdefFormatable;
 
   /// Data teknis tambahan (metadata) dari chip kartu (contoh: SAK, ATQA).
   final Map<String, dynamic> rawTechData;

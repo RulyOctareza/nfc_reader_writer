@@ -9,6 +9,10 @@ import 'package:nfc_manager/src/nfc_manager_android/tags/ndef_formatable.dart';
 import 'package:nfc_manager_ndef/nfc_manager_ndef.dart';
 import 'package:ndef_record/ndef_record.dart';
 import 'package:nfc_reader_writer/core/exceptions/nfc_exception.dart';
+import 'package:nfc_reader_writer/core/nfc/nfc_tag_profiler.dart';
+import 'package:nfc_reader_writer/core/nfc/kencana/kencana_nfc_constants.dart';
+import 'package:nfc_reader_writer/core/nfc/kencana/kencana_nfc_payload_decoder.dart';
+import 'package:nfc_reader_writer/core/nfc/kencana/kencana_nfc_verifier.dart';
 import 'package:nfc_reader_writer/domain/entities/nfc_record.dart';
 import 'package:nfc_reader_writer/domain/entities/nfc_tag_info.dart';
 
@@ -16,10 +20,18 @@ import 'package:nfc_reader_writer/domain/entities/nfc_tag_info.dart';
 /// Menggunakan pendekatan dinamis untuk mendukung fungsionalitas cross-platform
 /// dan kompatibilitas antar versi nfc_manager (3.x vs 4.x yang menggunakan Pigeon).
 class NfcService {
-  NfcService({NfcManager? nfcManager})
-    : _nfcManager = nfcManager ?? NfcManager.instance;
+  NfcService({
+    NfcManager? nfcManager,
+    KencanaNfcPayloadDecoder? kencanaDecoder,
+    KencanaNfcVerifier? kencanaVerifier,
+  }) : _nfcManager = nfcManager ?? NfcManager.instance,
+       _kencanaDecoder = kencanaDecoder ?? const KencanaNfcPayloadDecoder(),
+       _kencanaVerifier = kencanaVerifier;
 
   final NfcManager _nfcManager;
+  final KencanaNfcPayloadDecoder _kencanaDecoder;
+  final KencanaNfcVerifier? _kencanaVerifier;
+  final NfcTagProfiler _tagProfiler = const NfcTagProfiler();
 
   // ─────────────────────────────────────────────────────────────────────────
   // Public API
@@ -41,7 +53,7 @@ class NfcService {
       pollingOptions: {NfcPollingOption.iso14443, NfcPollingOption.iso15693},
       onDiscovered: (NfcTag tag) async {
         try {
-          final tagInfo = _extractTagInfo(tag);
+          final tagInfo = await _extractTagInfo(tag);
           onRead(tagInfo);
         } on NfcException catch (e) {
           onError(e.message);
@@ -130,135 +142,224 @@ class NfcService {
   // Private helpers
   // ─────────────────────────────────────────────────────────────────────────
 
-  NfcTagInfo _extractTagInfo(NfcTag tag) {
+  Future<NfcTagInfo> _extractTagInfo(NfcTag tag) async {
     final uid = _getUid(tag);
     final techList = _getTechList(tag);
-    final rawTechData = _getRawTechData(tag);
+    final signals = _extractChipSignals(tag);
+    final isNdefFormatable = _isNdefFormatable(tag);
 
     final ndef = Ndef.from(tag);
     if (ndef == null) {
-      return NfcTagInfo(
+      return _buildTagInfo(
         uid: uid,
         techList: techList,
+        signals: signals,
         isNdefFormatted: false,
-        rawTechData: rawTechData,
+        isNdefFormatable: isNdefFormatable,
       );
     }
 
     final ndefType = ndef.additionalData['type']?.toString();
     final capacity = ndef.maxSize;
+    final ndefWritable = ndef.additionalData['canMakeReadOnly'] == null
+        ? ndef.isWritable
+        : ndef.isWritable;
 
-    // Enrich metadata dengan model chip jika bisa dideteksi dari kapasitas NDEF.
-    final enrichedTechData = Map<String, dynamic>.from(rawTechData);
-    final chipModel = _detectChipModel(capacity, techList);
-    if (chipModel != null) enrichedTechData['Chip Model'] = chipModel;
-
-    final cachedMessage = ndef.cachedMessage;
-    if (cachedMessage == null || cachedMessage.records.isEmpty) {
-      return NfcTagInfo(
-        uid: uid,
-        techList: techList,
-        ndefType: ndefType,
-        capacity: capacity,
-        isNdefFormatted: true,
-        rawTechData: enrichedTechData,
-      );
-    }
-
-    // Coba temukan record Kencana dulu, jika tidak ada cari Text/URI/MIME apa saja.
-    NfcRecord? nfcRecord;
-    for (final record in cachedMessage.records) {
+    var message = ndef.cachedMessage;
+    if (message == null || message.records.isEmpty) {
       try {
-        if (record.typeNameFormat == TypeNameFormat.media &&
-            String.fromCharCodes(record.type) == 'application/x-kencana') {
-          nfcRecord = _decodeKencanaRecord(record);
-          break; // Prioritas utama: Kencana
-        }
-      } catch (_) {}
-    }
-
-    // Balikkan ke record NDEF umum jika Kencana tidak ada.
-    if (nfcRecord == null) {
-      for (final record in cachedMessage.records) {
-        try {
-          nfcRecord = _decodeNdefRecord(record);
-          if (nfcRecord != null) break;
-        } catch (_) {}
+        message = await ndef.read();
+      } catch (e, s) {
+        developer.log(
+          'NDEF read fallback gagal, memakai cached message',
+          name: 'NfcService.read',
+          error: e,
+          stackTrace: s,
+        );
       }
     }
+
+    final ndefUsedBytes = message?.byteLength;
+    NfcRecord? nfcRecord;
+    if (message != null && message.records.isNotEmpty) {
+      for (final record in message.records) {
+        try {
+          if (record.typeNameFormat == TypeNameFormat.media &&
+              String.fromCharCodes(record.type) ==
+                  KencanaNfcConstants.mimeType) {
+            nfcRecord = await _decodeKencanaRecord(record);
+            break;
+          }
+        } catch (_) {}
+      }
+
+      if (nfcRecord == null) {
+        for (final record in message.records) {
+          try {
+            nfcRecord = _decodeNdefRecord(record);
+            if (nfcRecord != null) break;
+          } catch (_) {}
+        }
+      }
+    }
+
+    return _buildTagInfo(
+      uid: uid,
+      techList: techList,
+      signals: signals,
+      isNdefFormatted: true,
+      isNdefFormatable: false,
+      ndefType: ndefType,
+      ndefMaxSize: capacity,
+      ndefWritable: ndefWritable,
+      ndefUsedBytes: ndefUsedBytes,
+      record: nfcRecord,
+    );
+  }
+
+  NfcTagInfo _buildTagInfo({
+    required String uid,
+    required List<String> techList,
+    required _ChipSignals signals,
+    required bool isNdefFormatted,
+    required bool isNdefFormatable,
+    String? ndefType,
+    int? ndefMaxSize,
+    bool? ndefWritable,
+    int? ndefUsedBytes,
+    NfcRecord? record,
+  }) {
+    final profile = _tagProfiler.profile(
+      NfcTagProfilerInput(
+        techList: techList,
+        sak: signals.sak,
+        atqa: signals.atqa,
+        mifareClassicSize: signals.mifareClassicSize,
+        mifareClassicType: signals.mifareClassicType,
+        mifareClassicSectors: signals.mifareClassicSectors,
+        mifareUltralightType: signals.mifareUltralightType,
+        mifareFamily: signals.mifareFamily,
+        ndefMaxSize: ndefMaxSize,
+        ndefPlatformType: ndefType,
+        ndefWritable: ndefWritable,
+        ndefMessageSize: ndefUsedBytes,
+        nfcVDsfId: signals.nfcVDsfId,
+        isNdefFormatted: isNdefFormatted,
+        isNdefFormatable: isNdefFormatable,
+      ),
+    );
+
+    final rawTechData = <String, dynamic>{
+      if (signals.sak != null) 'SAK': _formatIntToHex(signals.sak!),
+      if (signals.atqa != null) 'ATQA': _formatBytesToHex(
+        Uint8List.fromList(signals.atqa!),
+      ),
+      if (signals.mifareClassicSectors != null)
+        'Sektor Mifare': signals.mifareClassicSectors.toString(),
+      if (signals.historicalBytes != null)
+        'Historical Bytes': _formatBytesToHex(signals.historicalBytes!),
+      if (signals.hiLayerResponse != null)
+        'HiLayer Response': _formatBytesToHex(signals.hiLayerResponse!),
+      ...profile.extraMetadata,
+    };
 
     return NfcTagInfo(
       uid: uid,
       techList: techList,
-      ndefType: ndefType,
-      capacity: capacity,
-      record: nfcRecord,
-      isNdefFormatted: true,
-      rawTechData: enrichedTechData,
+      chipModel: profile.chipModel,
+      ndefType: profile.nfcForumType ?? ndefType,
+      capacity: profile.ndefCapacityBytes ?? ndefMaxSize,
+      totalMemoryBytes: profile.totalMemoryBytes ?? signals.mifareClassicSize,
+      ndefUsedBytes: ndefUsedBytes,
+      record: record,
+      isNdefFormatted: isNdefFormatted,
+      isNdefFormatable: isNdefFormatable,
+      rawTechData: rawTechData,
     );
   }
 
-  /// Mendeteksi model chip dari kapasitas NDEF dan daftar teknologi.
-  String? _detectChipModel(int maxSize, List<String> techList) {
-    final hasMifare = techList.any((t) => t.toLowerCase().contains('mifare'));
-    if (hasMifare) {
-      // Mifare Classic / Plus berdasarkan kapasitas setelah format NDEF
-      if (maxSize <= 716) return 'Mifare Classic 1K';
-      if (maxSize <= 1732) return 'Mifare Classic 2K';
-      if (maxSize <= 3440) return 'Mifare Classic 4K';
+  bool _isNdefFormatable(NfcTag tag) {
+    try {
+      return NdefFormatableAndroid.from(tag) != null;
+    } catch (_) {
+      return false;
     }
-    // NTAG series (NFC Forum Type 2)
-    if (maxSize <= 137) return 'NTAG213 (~200b)';
-    if (maxSize <= 492) return 'NTAG215 (~600b)';
-    if (maxSize <= 872) return 'NTAG216 (888b)';
-    if (maxSize <= 1912) return 'NTAG I2C 2K';
-    if (maxSize <= 7936) return 'NTAG I2C 8K';
-    return null;
   }
 
-  /// Mengekstrak metadata teknis spesifik chip secara dinamis.
-  Map<String, dynamic> _getRawTechData(NfcTag tag) {
-    final Map<String, dynamic> metadata = {};
+  /// Mengekstrak sinyal chip untuk identifikasi jenis kartu dan kapasitas.
+  _ChipSignals _extractChipSignals(NfcTag tag) {
     // ignore: invalid_use_of_protected_member
     final dynamic data = tag.data;
 
+    int? sak;
+    List<int>? atqa;
+    int? mifareClassicSize;
+    String? mifareClassicType;
+    int? mifareClassicSectors;
+    String? mifareUltralightType;
+    String? mifareFamily;
+    int? nfcVDsfId;
+    Uint8List? historicalBytes;
+    Uint8List? hiLayerResponse;
+
     try {
-      // NfcA (SAK, ATQA)
       final nfcA = data.nfcA;
       if (nfcA != null) {
-        metadata['SAK'] = _formatIntToHex(nfcA.sak as int);
-        metadata['ATQA'] = _formatBytesToHex(nfcA.atqa as Uint8List);
+        sak = nfcA.sak as int;
+        atqa = (nfcA.atqa as Uint8List).toList();
       }
     } catch (_) {}
 
     try {
-      // IsoDep (Historical Bytes, dsb)
       final isoDep = data.isoDep;
       if (isoDep != null) {
-        if (isoDep.historicalBytes != null) {
-          metadata['Historical Bytes'] = _formatBytesToHex(
-            isoDep.historicalBytes as Uint8List,
-          );
-        }
-        if (isoDep.hiLayerResponse != null) {
-          metadata['HiLayer Response'] = _formatBytesToHex(
-            isoDep.hiLayerResponse as Uint8List,
-          );
-        }
+        historicalBytes = isoDep.historicalBytes as Uint8List?;
+        hiLayerResponse = isoDep.hiLayerResponse as Uint8List?;
       }
     } catch (_) {}
 
     try {
-      // Mifare Classic
       final mc = data.mifareClassic;
       if (mc != null) {
-        metadata['Card Type'] = mc.type.toString().split('.').last;
-        metadata['Size'] = '${mc.size} bytes';
-        metadata['Sectors'] = mc.sectorCount.toString();
+        mifareClassicSize = mc.size as int;
+        mifareClassicType = mc.type.toString().split('.').last;
+        mifareClassicSectors = mc.sectorCount as int;
       }
     } catch (_) {}
 
-    return metadata;
+    try {
+      final mu = data.mifareUltralight;
+      if (mu != null) {
+        mifareUltralightType = mu.type.toString().split('.').last;
+      }
+    } catch (_) {}
+
+    try {
+      final nfcV = data.nfcV;
+      if (nfcV != null) {
+        nfcVDsfId = nfcV.dsfId as int;
+      }
+    } catch (_) {}
+
+    try {
+      final miFare = data.miFare;
+      if (miFare != null) {
+        mifareFamily = miFare.mifareFamily.toString().split('.').last;
+      }
+    } catch (_) {}
+
+    return _ChipSignals(
+      sak: sak,
+      atqa: atqa,
+      mifareClassicSize: mifareClassicSize,
+      mifareClassicType: mifareClassicType,
+      mifareClassicSectors: mifareClassicSectors,
+      mifareUltralightType: mifareUltralightType,
+      mifareFamily: mifareFamily,
+      nfcVDsfId: nfcVDsfId,
+      historicalBytes: historicalBytes,
+      hiLayerResponse: hiLayerResponse,
+    );
   }
 
   String _formatIntToHex(int val) => '0x${val.toRadixString(16).toUpperCase()}';
@@ -334,29 +435,15 @@ class NfcService {
     }
   }
 
-  NfcTextRecord _decodeKencanaRecord(NdefRecord record) {
-    final payload = record.payload;
-    if (payload.length < 8) {
-      throw const NfcUnknownException('Payload Kencana terlalu pendek.');
+  Future<NfcKencanaRecord> _decodeKencanaRecord(NdefRecord record) async {
+    try {
+      return await _kencanaDecoder.decode(
+        record.payload,
+        verifier: _kencanaVerifier,
+      );
+    } on FormatException catch (e) {
+      throw NfcUnknownException('Format kartu Kencana tidak valid: ${e.message}');
     }
-    final startValid =
-        payload[0] == 0xDE &&
-        payload[1] == 0xAD &&
-        payload[2] == 0xBE &&
-        payload[3] == 0xEF;
-    final endValid =
-        payload[payload.length - 4] == 0xDE &&
-        payload[payload.length - 3] == 0xAD &&
-        payload[payload.length - 2] == 0xBE &&
-        payload[payload.length - 1] == 0xEF;
-
-    if (!startValid || !endValid) {
-      throw const NfcUnknownException('Format Delimiter Kencana tidak valid.');
-    }
-    return NfcTextRecord(
-      text: String.fromCharCodes(payload.sublist(4, payload.length - 4)),
-      languageCode: 'Dart',
-    );
   }
 
   NfcRecord? _decodeNdefRecord(NdefRecord record) {
@@ -619,4 +706,30 @@ class NfcService {
       ],
     );
   }
+}
+
+class _ChipSignals {
+  const _ChipSignals({
+    this.sak,
+    this.atqa,
+    this.mifareClassicSize,
+    this.mifareClassicType,
+    this.mifareClassicSectors,
+    this.mifareUltralightType,
+    this.mifareFamily,
+    this.nfcVDsfId,
+    this.historicalBytes,
+    this.hiLayerResponse,
+  });
+
+  final int? sak;
+  final List<int>? atqa;
+  final int? mifareClassicSize;
+  final String? mifareClassicType;
+  final int? mifareClassicSectors;
+  final String? mifareUltralightType;
+  final String? mifareFamily;
+  final int? nfcVDsfId;
+  final Uint8List? historicalBytes;
+  final Uint8List? hiLayerResponse;
 }

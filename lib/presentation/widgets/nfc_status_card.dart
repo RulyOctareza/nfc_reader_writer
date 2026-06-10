@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:nfc_reader_writer/domain/entities/nfc_record.dart';
 import 'package:nfc_reader_writer/domain/entities/nfc_tag_info.dart';
+import 'package:nfc_reader_writer/presentation/widgets/nfc_tag_metadata_section.dart';
 
 /// Card yang menampilkan status dan hasil baca NFC.
 ///
@@ -106,62 +106,7 @@ class _ResultCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 20),
-
-            // Metadata Section
-            _MetadataRow(
-              label: 'ID Kartu (UID)',
-              value: tagInfo.uid,
-              textTheme: textTheme,
-              colorScheme: colorScheme,
-            ),
-            const SizedBox(height: 12),
-            _MetadataRow(
-              label: 'Teknologi',
-              value: tagInfo.techList.join(', '),
-              textTheme: textTheme,
-              colorScheme: colorScheme,
-            ),
-            if (tagInfo.ndefType != null) ...[
-              const SizedBox(height: 12),
-              _MetadataRow(
-                label: 'Jenis NDEF',
-                value: tagInfo.ndefType!,
-                textTheme: textTheme,
-                colorScheme: colorScheme,
-              ),
-            ],
-            if (tagInfo.capacity != null) ...[
-              const SizedBox(height: 12),
-              _MetadataRow(
-                label: 'Kapasitas',
-                value: '${tagInfo.capacity} bytes',
-                textTheme: textTheme,
-                colorScheme: colorScheme,
-              ),
-            ],
-
-            // Chip Technical Metadata Section
-            if (tagInfo.rawTechData.isNotEmpty) ...[
-              const Divider(height: 32),
-              Text(
-                'Metadata Teknis (Chip)',
-                style: textTheme.labelSmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 12),
-              ...tagInfo.rawTechData.entries.map((e) => Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: _MetadataRow(
-                      label: e.key,
-                      value: e.value.toString(),
-                      textTheme: textTheme,
-                      colorScheme: colorScheme,
-                    ),
-                  )),
-            ],
-
+            NfcTagMetadataSection(tagInfo: tagInfo),
             const Divider(height: 32),
 
             // Content Section
@@ -207,6 +152,37 @@ class _ResultCard extends StatelessWidget {
                     const SizedBox(height: 12),
                     _MetaChip(
                       label: 'Tipe: URI',
+                      colorScheme: colorScheme,
+                    ),
+                  ],
+                NfcKencanaRecord(
+                  jsonText: final jsonText,
+                  signatureValid: final valid,
+                  isLegacyFormat: final legacy,
+                ) =>
+                  [
+                    Text(
+                      'Kartu Kencana',
+                      style: textTheme.labelSmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant
+                            .withValues(alpha: 0.7),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SelectableText(
+                      jsonText,
+                      style: textTheme.bodyLarge?.copyWith(
+                        fontFamily: 'monospace',
+                        height: 1.4,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _MetaChip(
+                      label: legacy
+                          ? 'Format lama'
+                          : valid == true
+                              ? 'Signature valid'
+                              : 'Signature invalid',
                       colorScheme: colorScheme,
                     ),
                   ],
@@ -264,7 +240,9 @@ class _ResultCard extends StatelessWidget {
               ),
             ] else ...[
               Text(
-                'Gunakan menu "Tulis NFC" untuk menginisialisasi tag ini agar bisa menyimpan data.',
+                tagInfo.isNdefFormatable
+                    ? 'Tag belum terformat NDEF, tetapi mendukung format NDEF.'
+                    : 'Tag belum terformat NDEF dan tidak terdeteksi sebagai NDEF formatable.',
                 style: textTheme.bodyMedium?.copyWith(
                   color: colorScheme.onSurfaceVariant,
                   fontStyle: FontStyle.italic,
@@ -276,43 +254,6 @@ class _ResultCard extends StatelessWidget {
       ),
     );
   }
-}
-
-class _MetadataRow extends StatelessWidget {
-  const _MetadataRow({
-    required this.label,
-    required this.value,
-    required this.textTheme,
-    required this.colorScheme,
-  });
-
-  final String label;
-  final String value;
-  final TextTheme textTheme;
-  final ColorScheme colorScheme;
-
-  @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        label,
-        style: textTheme.labelSmall?.copyWith(
-          color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
-          letterSpacing: 0.5,
-        ),
-      ),
-      const SizedBox(height: 2),
-      Text(
-        value,
-        style: textTheme.bodyMedium?.copyWith(
-          color: colorScheme.onSurface,
-          fontWeight: FontWeight.w500,
-          fontFamily: 'monospace',
-        ),
-      ),
-    ],
-  );
 }
 
 class _ErrorCard extends StatelessWidget {

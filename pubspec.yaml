@@ -7,8 +7,10 @@ environment:
   sdk: ^3.9.0
 
 dependencies:
+  cryptography: ^2.9.0
   flutter:
     sdk: flutter
+  flutter_svg: ^2.2.0
   go_router: ^17.1.0
   google_fonts: ^8.0.2
   ndef_record: ^1.2.1
@@ -23,3 +25,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/nfc/private.pem
