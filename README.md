@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/preview/hero.png" alt="NFC Reader Writer — ilustrasi aplikasi baca tulis NFC" width="100%">
+  <img src="docs/preview/hero.svg" alt="NFC Reader Writer — ilustrasi aplikasi baca tulis NFC" width="100%">
 </p>
 
 <h1 align="center">NFC Reader / Writer</h1>
